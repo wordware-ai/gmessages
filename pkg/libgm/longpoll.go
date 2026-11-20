@@ -456,12 +456,11 @@ func tryReadBody(resp io.ReadCloser) []byte {
 }
 
 func (c *Client) doLongPoll(ctx context.Context, loggedIn, background bool, onFirstConnect func()) bool {
-	c.listenID++
-	listenID := c.listenID
+	listenID := c.listenID.Add(1)
 	listenReqID := uuid.NewString()
 
 	origCtx := ctx
-	log := c.Logger.With().Int("listen_id", listenID).Logger()
+	log := c.Logger.With().Int64("listen_id", listenID).Logger()
 	defer func() {
 		log.Debug().Msg("Long polling stopped")
 	}()
@@ -484,7 +483,7 @@ func (c *Client) doLongPoll(ctx context.Context, loggedIn, background bool, onFi
 
 	errorCount := 1
 	var disconnectedAt time.Time
-	for c.listenID == listenID {
+	for c.listenID.Load() == listenID {
 		err := c.refreshAuthToken(nil)
 		if err != nil {
 			if isFatalRefreshError(err) {
@@ -577,7 +576,7 @@ func (c *Client) doLongPoll(ctx context.Context, loggedIn, background bool, onFi
 			time.Sleep(time.Duration(sleepSeconds) * time.Second)
 			continue
 		}
-		if c.listenID != listenID {
+		if c.listenID.Load() != listenID {
 			cancel()
 			log.Debug().Msg("Long polling stopped while opening stream, closing it")
 			_ = resp.Body.Close()
@@ -615,7 +614,7 @@ func (c *Client) doLongPoll(ctx context.Context, loggedIn, background bool, onFi
 
 func (c *Client) readLongPoll(log *zerolog.Logger, rc io.ReadCloser, background bool, cancel context.CancelFunc) bool {
 	defer rc.Close()
-	c.disconnecting = false
+	c.disconnecting.Store(false)
 	reader := bufio.NewReader(rc)
 	buf := make([]byte, 32*1024)
 	var accumulatedData []byte
@@ -673,7 +672,7 @@ func (c *Client) readLongPoll(log *zerolog.Logger, rc io.ReadCloser, background 
 		lastRead = time.Now()
 		if err != nil {
 			var logEvt *zerolog.Event
-			if (errors.Is(err, io.EOF) && expectEOF) || c.disconnecting {
+			if (errors.Is(err, io.EOF) && expectEOF) || c.disconnecting.Load() {
 				logEvt = log.Trace()
 			} else {
 				logEvt = log.Warn()
@@ -736,11 +735,11 @@ func (c *Client) closeLongPolling() {
 	}
 	conn := c.longPollingConn.Swap(nil)
 	c.Logger.Debug().
-		Int("current_listen_id", c.listenID).
+		Int64("current_listen_id", c.listenID.Load()).
 		Bool("connection_open", conn != nil).
 		Msg("Closing long polling connection manually")
-	c.listenID++
-	c.disconnecting = true
+	c.listenID.Add(1)
+	c.disconnecting.Store(true)
 	if conn != nil {
 		_ = (*conn).Close()
 	}

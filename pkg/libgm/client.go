@@ -151,9 +151,9 @@ type Client struct {
 	sessionHandler *SessionHandler
 
 	longPollingConn atomic.Pointer[io.ReadCloser]
-	listenID        int
+	listenID        atomic.Int64
 	skipCount       int
-	disconnecting   bool
+	disconnecting   atomic.Bool
 
 	pingInterval             time.Duration
 	alertTimeoutCount        int
